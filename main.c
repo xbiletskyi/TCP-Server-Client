@@ -1,13 +1,30 @@
+/*
+ * SPAASM ASSIGNMENT 2
+ * OLEKSII BILETSKYI
+ *
+ *
+ * Completed extra tasks:
+ * 9) Working as client with '-c' (+3)
+ * 11) Setting ip address with '-i' (+2)
+ * 17) Linked function (+2)
+ * 27) Handling Ctrl+C both on client and server (+5)
+*/
+
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <pwd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
+#include "signal_handlers.h"
 
 #define MAX_COMMAND_LENGTH 100
 #define MAX_BUFFER_LENGTH 1024*1024
@@ -22,6 +39,10 @@
         "  [-c client]: Run as client\n"\
         "  [-p port]: Port number (Default 50000)\n"\
         "  [-i ip_address]: IP address (Default 127.0.0.10)\n"
+
+typedef struct {
+    int sock;
+} thread_args;
 
 void getCurrentTime(char *timeStr) {
     time_t currentTime;
@@ -54,17 +75,89 @@ int send_data(int socket, char* message, int flags){
     return 1;
 }
 
+void *clientHandler(void *args) {
+    thread_args *clientArgs = (thread_args *)args;
+    int clntSock = clientArgs->sock;
+    char command[MAX_COMMAND_LENGTH];
+
+    while (1) {
+        char prompt[MAX_PROMPT_LENGTH];
+        generatePrompt(prompt);
+        if (send(clntSock, prompt, strlen(prompt), 0) < 0) {
+            perror("send() error");
+            close(clntSock);
+            break;
+        }
+        memset(command, '\0', MAX_COMMAND_LENGTH);
+        if (recv(clntSock, command, MAX_COMMAND_LENGTH, 0) == -1) {
+            perror("recv() error");
+            close(clntSock);
+            break;
+        }
+        command[strcspn(command, "\n")] = '\0';
+        printf("Received command from client: %s\n", command);
+        if (strcmp(command, "quit") == 0) {
+            close(clntSock);
+            break;
+        } else if (strcmp(command, "halt") == 0) {
+            close(clntSock);
+            exit(EXIT_SUCCESS);
+        } else if (strcmp(command, "help") == 0) {
+            if (send(clntSock, HELP_MESSAGE, strlen(HELP_MESSAGE), 0) == -1) {
+                perror("send() error");
+                close(clntSock);
+                break;
+            }
+        }
+        else {
+            int pipefd[2];
+            pid_t pid;
+            if (pipe(pipefd) == -1) {
+                perror("pipe");
+            }
+            pid = fork();
+            if (pid == -1) {
+                perror("fork");
+            } else if (pid == 0) {
+                close(pipefd[0]); // Close the read-end of the pipe
+                dup2(pipefd[1], STDOUT_FILENO); // Redirect stdout to the write-end of the pipe
+                dup2(pipefd[1], STDERR_FILENO); // Optional: Redirect stderr to the write-end of the pipe
+                close(pipefd[1]); // No longer need this after dup2
+                execlp("/bin/sh", "sh", "-c", command, (char *)NULL);
+                perror("execlp");
+                exit(EXIT_FAILURE);
+            } else {
+                close(pipefd[1]);
+                char buffer[4096];
+                ssize_t bytesRead;
+                while ((bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) {
+                    buffer[bytesRead] = '\0'; // Null-terminate the string
+                    send_data(clntSock, buffer, 0); // Assumes send_data is robust for partial writes
+                }
+
+                close(pipefd[0]); // Close the read-end of the pipe
+                waitpid(pid, NULL, 0); // Wait for the child process to prevent zombie processes
+            }
+        }
+
+    }
+    free(args);
+    return NULL;
+}
+
 void runAsServer(char* ipAddr, int port) {
     int servSock, clntSock;
     struct sockaddr_in servAddr, clntAddr;
     socklen_t clntAddrLen;
-    char command[MAX_COMMAND_LENGTH];
 
     servSock = socket(AF_INET, SOCK_STREAM, 0);
     if (servSock == -1) {
         perror("socket() error");
         exit(EXIT_FAILURE);
     }
+    setServerSocket(servSock);
+    signal(SIGINT, handleSigintServer);
+
     printf("Server started at:\n"
            "ip: %s\n"
            "port: %d\n", ipAddr, port);
@@ -83,49 +176,31 @@ void runAsServer(char* ipAddr, int port) {
         perror("listen() error");
         exit(EXIT_FAILURE);
     }
-    clntAddrLen = sizeof(clntAddr);
-    clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
-    if (clntSock == -1) {
-        perror("accept() error");
-        close(clntSock);
-        close(servSock);
-        exit(EXIT_FAILURE);
-    }
     while (1) {
-        char prompt[MAX_PROMPT_LENGTH];
-        generatePrompt(prompt);
-        if (send(clntSock, prompt, strlen(prompt), 0) < 0){
-            perror("send() error");
-            close(clntSock);
-            close(servSock);
-            exit (EXIT_FAILURE);
+        clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
+        if (clntSock == -1) {
+            perror("accept() error");
+            continue;
         }
-        memset(command, '\0', MAX_COMMAND_LENGTH);
-        if (recv(clntSock, command, MAX_COMMAND_LENGTH, 0) == -1) {
-            perror("recv() error");
+        char *clientIP = inet_ntoa(clntAddr.sin_addr);
+        printf("Accepted connection from: %s:%d\n", clientIP, clntAddr.sin_port);
+        thread_args *args = malloc(sizeof(thread_args));
+        if (args == NULL) {
+            perror("Failed to allocate memory for thread arguments");
             close(clntSock);
             continue;
         }
-        command[strcspn(command, "\n")] = '\0';
-        printf("Received command from client: %s\n", command);
-        if (command[0] == '\0') continue;
-        else if (strcmp(command, "quit") == 0){
+        args->sock = clntSock;
+        pthread_t threadID;
+        if (pthread_create(&threadID, NULL, clientHandler, (void *)args) != 0) {
+            perror("pthread_create() error");
             close(clntSock);
-            break;
-        }
-        else if (strcmp(command, "halt") == 0){
-            close(clntSock);
-            close(servSock);
-            exit(EXIT_SUCCESS);
-        }
-        else if (strcmp(command, "help") == 0){
-            if (send(clntSock, HELP_MESSAGE, strlen(HELP_MESSAGE), 0) == -1){
-                perror("send() error;");
-                close(clntSock);
-                break;
-            }
+            free(args);
+        } else {
+            pthread_detach(threadID);
         }
     }
+
     close(servSock);
 }
 
@@ -140,6 +215,8 @@ void runAsClient(char *ipAddress, int port) {
         perror("socket() error");
         exit(EXIT_FAILURE);
     }
+    setClientSocket(clientSocket);
+    signal(SIGINT, handleSigintClient);
 
     memset(&servAddr, 0, sizeof(servAddr));
     servAddr.sin_family = AF_INET;
