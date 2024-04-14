@@ -129,7 +129,6 @@ void parseCommand(char* commands, int clntSock){
                     dup2(pipefd[1], STDOUT_FILENO);
                     dup2(pipefd[1], STDERR_FILENO);
                 }
-
                 if (fd != -1) close(fd);
                 else close(pipefd[1]); // No longer need this after dup2
                 execlp("/bin/sh", "sh", "-c", command, (char *)NULL);
