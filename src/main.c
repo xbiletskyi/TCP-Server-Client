@@ -191,7 +191,6 @@ void *clientHandler(void *args) {   // function to handle every single client
         printf("Received command from client: %s\n", command);
 
         parseCommand(command, clntSock);    // handle the command and send the output
-
     }
     free(args);
     return NULL;
