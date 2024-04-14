@@ -117,13 +117,19 @@ void parseCommand(char* commands, int clntSock){
                         exit(EXIT_FAILURE);
                     }
                     dup2(fd, STDOUT_FILENO);
+                    dup2(fd, STDERR_FILENO);
                 }
                 else if (redirectToFDFlag){     // redirect the output to the given file descriptor
                     fd = atoi(redirectionAddress);
                     dup2(fd, STDOUT_FILENO);
+                    dup2(fd, STDERR_FILENO);
                 }
                 //
-                if(!redirectToFDFlag && !redirectToFileFlag) dup2(pipefd[1], STDOUT_FILENO);
+                if(!redirectToFDFlag && !redirectToFileFlag) {
+                    dup2(pipefd[1], STDOUT_FILENO);
+                    dup2(pipefd[1], STDERR_FILENO);
+                }
+
                 if (fd != -1) close(fd);
                 else close(pipefd[1]); // No longer need this after dup2
                 execlp("/bin/sh", "sh", "-c", command, (char *)NULL);
@@ -131,7 +137,8 @@ void parseCommand(char* commands, int clntSock){
                 exit(EXIT_FAILURE);
             } else {    // parent process
                 close(pipefd[1]);       // close write-end of the pipe
-                char buffer[4096];
+                char buffer[MAX_BUFFER_LENGTH];
+                memset(buffer, '\0', MAX_BUFFER_LENGTH);
                 ssize_t bytesRead;
                 if (redirectToTcpFlag) {
                     redirectToTCP(pipefd, redirectionAddress); // Function to handle TCP redirection
@@ -141,10 +148,12 @@ void parseCommand(char* commands, int clntSock){
                     while ((bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) {
                         buffer[bytesRead] = '\0'; // Null-terminate the string
                         sendStr(clntSock, buffer, 0);
-                        sendEom(clntSock);   // Indicates end of message
                     }
                 }
-                if (buffer[0] == '\0') sendStr(clntSock, "Done\n<EOM>\n", 0);
+                if (buffer[0] == '\0') {
+                    sendStr(clntSock, "Done\n", 0);
+                }
+                sendEom(clntSock);  // End of the command output
                 close(pipefd[0]); // Close the read-end of the pipe
                 waitpid(pid, NULL, 0); // Wait for the child process to prevent zombie processes
             }

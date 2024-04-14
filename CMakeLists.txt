@@ -13,4 +13,3 @@ add_executable(spaasm
         src/libs.h
         src/client.h)
 
-target_include_directories(MyExecutable PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

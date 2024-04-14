@@ -1,11 +1,11 @@
 #include "signal_handlers.h"
 #include "libs.h"
 
-void sendStr(int socket, char* message, int flags){
+void sendStr(int socket, char* message, int flags){ // function to send string to tcp socket
     ssize_t totalSent = 0;
     ssize_t bytesSent;
 
-    while (totalSent < strlen(message)) {
+    while (totalSent < strlen(message)) {       // handle fragmented sending
         bytesSent = send(socket, message + totalSent, strlen(message) - totalSent, flags);
         if (bytesSent < 0) {
             perror("send() error");
@@ -15,17 +15,17 @@ void sendStr(int socket, char* message, int flags){
     }
 }
 
-void sendEom(int socket){
+void sendEom(int socket){   // simple function to send the end-of-message marker
     if(send(socket, "<EOM>\n", strlen("<EOM>\n"), 0) < 0){
         perror("send() error");
         exit(EXIT_FAILURE);
     }
 }
 
-void receiveData(int socket, char* buffer, int bufferSize){
+void receiveData(int socket, char* buffer, int bufferSize){     // function to receive data from TCP into buffer
     ssize_t bytesRead;
     size_t totalBytesRead = 0;
-    while (1) {
+    while (1) { // handling fragmented data
         bytesRead = recv(socket, buffer + totalBytesRead, bufferSize - totalBytesRead - 1, 0);
         if (bytesRead == -1) {
             perror("Error reading from TCP connection");
@@ -35,7 +35,7 @@ void receiveData(int socket, char* buffer, int bufferSize){
             break;
         } else {
             totalBytesRead += bytesRead;
-            buffer[totalBytesRead] = '\0'; // Null-terminate the string
+            buffer[totalBytesRead] = '\0';
             // Check if <EOM>\n has been received
             char* EOM = strstr(buffer, "<EOM>\n");
             if (EOM != NULL) {
@@ -46,7 +46,7 @@ void receiveData(int socket, char* buffer, int bufferSize){
     }
 }
 
-int connectTCP(char* ip, int port){
+int connectTCP(char* ip, int port){ // simple function to establish TCP connection
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in addr;
     // Configure server address
@@ -63,7 +63,7 @@ int connectTCP(char* ip, int port){
     return sockfd;
 }
 
-void receiveFromTCP(char* address, char* command){
+void receiveFromTCP(char* address, char* command){  // function to receive input to the command from TCP
     char* ip = strtok(address, ":");
     char* portStr = strtok(NULL, "");
     int port = atoi(portStr);
@@ -75,8 +75,8 @@ void receiveFromTCP(char* address, char* command){
     strncat(command, buffer, MAX_COMMAND_LENGTH - strlen(command) - 1);
 }
 
-void redirectToTCP(int *pipefd, char* address) {
-    char* ip = strtok(address, ":");
+void redirectToTCP(int *pipefd, char* address) {    // function to redirect the output to TCP
+    char* ip = strtok(address, ":");    // extract ip address from the ip:port format
     char* portStr = strtok(NULL, "");
     int port = atoi(portStr);
     int sockfd = connectTCP(ip, port);
