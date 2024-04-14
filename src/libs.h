@@ -39,4 +39,3 @@
         "  [>&] Redirect output to custom file descriptor\n"                     \
 
 #endif // SPAASM_LIBS_H
-c
