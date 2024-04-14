@@ -1,3 +1,0 @@
-
-gcc -Wall -o main main.c signal_handlers.c
-
